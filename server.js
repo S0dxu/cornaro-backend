@@ -50,9 +50,7 @@ const Info = mongoose.model("Info", infoSchema);
 const createLimiter = (max) =>
   rateLimit({ windowMs: 60000, max, standardHeaders: true, legacyHeaders: false });
 
-const authLimiter = createLimiter(60);
-const getLimiter = createLimiter(200);
-
+const authLimiter = createLimiter(30);
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
@@ -69,9 +67,7 @@ function verifyAdmin(req, res, next) {
       req.user = user;
       next();
     });
-  } catch {
-    return res.status(401).json({ message: "Token non valido" });
-  }
+  } catch { return res.status(401).json({ message: "Token non valido" }); }
 }
 
 function generateCode() {
@@ -84,8 +80,7 @@ function generateCode() {
 function isValidSchoolEmail(email) {
   email = email.normalize("NFKC").replace(/[^\x00-\x7F]/g, "").toLowerCase().trim();
   if (/[\r\n]/.test(email)) return false;
-  const regex = /^[a-z]*\.[a-z]{2,3}@studenti\.liceocornaro\.edu\.it$/;
-  return regex.test(email);
+  return /^[a-z]*\.[a-z]{2,3}@studenti\.liceocornaro\.edu\.it$/.test(email);
 }
 
 const sendMailAsync = (mailOptions) =>
@@ -98,20 +93,14 @@ const sendMailAsync = (mailOptions) =>
 app.post("/register/request", authLimiter, async (req, res) => {
   const { schoolEmail } = req.body;
   if (!schoolEmail || !isValidSchoolEmail(schoolEmail)) return res.status(400).json({ message: "Email non valida" });
-
   const now = Date.now();
   if (emailCooldown.has(schoolEmail) && now - emailCooldown.get(schoolEmail) < 60000)
     return res.status(429).json({ message: "Attendi 60 secondi" });
-
   const code = generateCode();
   const expiresAt = new Date(now + 10 * 60000);
-
   try {
     await sendMailAsync({ from: process.env.EMAIL_USER, to: schoolEmail, subject: "Codice di verifica App Cornaro", text: `Il tuo codice: ${code}` });
-  } catch {
-    return res.status(400).json({ message: "Email inesistente" });
-  }
-
+  } catch { return res.status(400).json({ message: "Email inesistente" }); }
   await VerificationCode.findOneAndUpdate({ schoolEmail }, { code, expiresAt }, { upsert: true });
   emailCooldown.set(schoolEmail, now);
   res.json({ message: "Codice inviato" });
@@ -120,11 +109,9 @@ app.post("/register/request", authLimiter, async (req, res) => {
 app.post("/register/verify", authLimiter, async (req, res) => {
   const { firstName, lastName, instagram, schoolEmail, password, code, profileImage } = req.body;
   if (!firstName || !lastName || !schoolEmail || !password || !code) return res.status(400).json({ message: "Campi obbligatori mancanti" });
-
   const key = schoolEmail;
   const fail = failedAttempts.get(key) || { count: 0, lock: 0 };
   if (fail.lock > Date.now()) return res.status(429).json({ message: "Bloccato temporaneamente" });
-
   const record = await VerificationCode.findOne({ schoolEmail });
   if (!record || record.code !== code) {
     fail.count++;
@@ -136,18 +123,13 @@ app.post("/register/verify", authLimiter, async (req, res) => {
     failedAttempts.set(key, fail);
     return res.status(400).json({ message: "Codice non valido" });
   }
-
   if (record.expiresAt < new Date()) return res.status(400).json({ message: "Codice scaduto" });
-
   const exists = await User.findOne({ schoolEmail });
   if (exists) return res.status(400).json({ message: "Utente già esistente" });
-
   const hashed = await bcrypt.hash(password, 10);
   await User.create({ firstName, lastName, instagram: instagram || "", schoolEmail, password: hashed, profileImage: profileImage || "" });
-
   await VerificationCode.deleteOne({ schoolEmail });
   failedAttempts.delete(key);
-
   const token = jwt.sign({ id: schoolEmail }, SECRET_KEY);
   res.status(201).json({ message: "Registrazione completata", token });
 });
@@ -155,13 +137,10 @@ app.post("/register/verify", authLimiter, async (req, res) => {
 app.post("/login", authLimiter, async (req, res) => {
   const { schoolEmail, password } = req.body;
   if (!schoolEmail || !password) return res.status(400).json({ message: "Campi mancanti" });
-
   const user = await User.findOne({ schoolEmail });
   if (!user) return res.status(400).json({ message: "Credenziali errate" });
-
   const match = await bcrypt.compare(password, user.password);
   if (!match) return res.status(400).json({ message: "Credenziali errate" });
-
   const token = jwt.sign({ id: schoolEmail }, SECRET_KEY);
   res.json({ message: "Login riuscito", token, firstName: user.firstName, lastName: user.lastName, instagram: user.instagram || "", schoolEmail: user.schoolEmail, profileImage: user.profileImage || "" });
 });
@@ -191,7 +170,6 @@ app.post("/upload-imgur", upload.single("image"), async (req, res) => {
     const nsfwResponse = await fetch("https://letspurify.askjitendra.com/send/data", { method: "POST", headers: { "accept": "*/*", "content-type": `multipart/form-data; boundary=${boundary}` }, body });
     const nsfwData = await nsfwResponse.json();
     if (nsfwData.status) return res.status(400).json({ message: "L'immagine non è consentita" });
-
     const base64Image = req.file.buffer.toString("base64");
     const imgurResponse = await fetch("https://api.imgur.com/3/upload", { method: "POST", headers: { Authorization: `Client-ID ${process.env.IMGUR_CLIENT_ID}` }, body: new URLSearchParams({ image: base64Image }) });
     const imgurData = await imgurResponse.json();
@@ -222,7 +200,7 @@ function cacheRequest(ttl = 5000) {
   };
 }
 
-app.get("/get-info", getLimiter, cacheRequest(10000), async (req, res) => {
+app.get("/get-info", cacheRequest(10000), async (req, res) => {
   const infos = await Info.find({}, { createdBy: 0 }).sort({ createdAt: -1 }).limit(15);
   res.json({ infos });
 });
